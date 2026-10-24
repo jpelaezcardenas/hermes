@@ -258,12 +258,23 @@ def _collect_profile_gateway_topology_cached() -> dict[str, Any]:
         return data
 
 
+_PLATFORMS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
+_PLATFORMS_CACHE_LOCK = threading.Lock()
+_PLATFORMS_CACHE_TTL = 10.0
+
+
 def _load_configured_gateway_platforms() -> set[str]:
-    """Connected platform names; synchronous by design — the first ``load_gateway_config()`` does
-    platform discovery and can outlast Desktop's WS connect timeout on Windows, so ``get_status``
-    runs this in Starlette's worker pool."""
-    from gateway.config import load_gateway_config
-    return {platform.value for platform in load_gateway_config().get_connected_platforms()}
+    """Connected platform names; cached with 10s TTL to protect the GIL and avoid timeouts."""
+    c = _PLATFORMS_CACHE
+    if c["data"] is not None and time.monotonic() - c["ts"] < _PLATFORMS_CACHE_TTL:
+        return c["data"]
+    with _PLATFORMS_CACHE_LOCK:
+        if c["data"] is not None and time.monotonic() - c["ts"] < _PLATFORMS_CACHE_TTL:
+            return c["data"]
+        from gateway.config import load_gateway_config
+        data = {platform.value for platform in load_gateway_config().get_connected_platforms()}
+        c.update(data=data, ts=time.monotonic())
+        return data
 
 
 _WINDOWS_11_MIN_BUILD = 22000
